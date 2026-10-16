@@ -1,4 +1,4 @@
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FutureTimeoutError
 import threading
 import json
 import time
@@ -14,7 +14,7 @@ import tiktoken
 from openai import OpenAI
 from Coref_evaluation import (gt_json_to_clusters, system_json_to_clusters, evaluate_collection, evaluate_collection_er_metrics)
 from data.yours_data import (OUTPUT_PATH_CLEAN, OUTPUT_PATH_MERGE, GOLD_CLUSTERS,ALREADY_MERGED_PATH, GENAI_MODELS, CLAUDE_MODELS, OPENAI_MODELS, 
-                            API_KEY_GENAI, API_KEY_ANTHROPIC, API_KEY_OPENAI, MBS, BTC, LLM_MERGE)
+                            API_KEY_GENAI, API_KEY_ANTHROPIC, API_KEY_OPENAI, MBS, BTC, LLM_MERGE, PROMPT_CONCILER)
 
 OUTPUT_PATH = OUTPUT_PATH_MERGE
 GT = GOLD_CLUSTERS
@@ -29,20 +29,12 @@ tot_O_tokens = 0
 client_genai = genai.Client(api_key=API_KEY_GENAI)
 client_claude = anthropic.Anthropic(api_key=API_KEY_ANTHROPIC)
 client_openai = OpenAI(api_key=API_KEY_OPENAI)
-_encoder = tiktoken.get_encoding("cl100k_base")
+_encoder = tiktoken.get_encoding("o200k_base")
 rate_limit_wait = 90.0
 rate_limit_until = 0.0
+_timeout_executor = ThreadPoolExecutor(max_workers=64)
 
-prompt = """In Input hai una lista di titoli di Cluster, associati al loro id
-es: [[id_es1, "Presidente del Consiglio"],[id_es2,"Marco Ramat"],[id_es3,"Francesco Cossiga"], [id_es4, "Primo Ministro"]]
-crea un list[list] in cui ogn lista contiene gli ID dei cluster che riferiscono alla stessa entità.
-Nella lista di output ci devono essere TUTTI gli elementi dati in input, se un cluster è l'unico a riferirsi ad un'entità allora mettilo singolo
-esempio Output:
-[[ides_1, ides_45], [ides_4, ides_7, ides_89], [ides_76], [ides_21]]
-Restituisci ESCLUSIVAMENTE LA LISTA DI LISTE, nessun testo prima o dopo, nessun esempio, nessun markdown.
-ATTENZIONE A RIPORTARE GLI ID DEI CLUSTER ESATTAMENTE IDENTICI, NON CI DEVONO ESSERE ERRORI NE DUPLICATI.
-Input:
-{}"""
+prompt = PROMPT_CONCILER
 
 def count_tokens(text: str) -> int:
 
@@ -108,8 +100,11 @@ def separate_clusters(clusters: list, batch_length: int, P: int = 0) -> dict: # 
             if id is None or title is None:
                 continue
             id_sliced = id[-20:]
-            first_char = title[0].lower() if title[0].isalpha() else "#"
-            A_groups[first_char].append((id_sliced, title))
+            if title == "":
+                A_groups["#"].append((id_sliced, title))
+            else:
+                first_char = title[0].lower() if title[0].isalpha() else "#"
+                A_groups[first_char].append((id_sliced, title))
             
         for _, items in A_groups.items():
             smallest_group = min(titles, key=lambda k: len(titles[k]))
@@ -155,37 +150,47 @@ def process_clusters_parallel(Sep_C: dict[int, list[tuple[str, str]]], max_worke
 
     return to_merge
 
-def A_call_llm(cluster_list: list, prompt: str, retry: int = 2, delay: float = 5.0) -> dict:
-
+def A_call_llm(cluster_list: list, prompt: str, retry: int = 2, delay: float = 5.0, call_timeout: float = 200.0) -> dict:
+ 
     global tot_O_tokens
     global tot_I_tokens
     global volta
-
+ 
     n = volta + 1
     with volta_lock:
         volta += 1
     print("chiamata: ", n)
     Prompt = prompt.replace("{}", json.dumps(cluster_list, ensure_ascii=False, indent=2), 1)
-    I_tokens = count_tokens(Prompt)
-    with volta_lock:
-        tot_I_tokens += I_tokens
     
     for model in CLAUDE_MODELS:
         for attempt in range(retry):
             wait_if_rate_limited()
+            I_tokens = count_tokens(Prompt)
+            with volta_lock:
+                tot_I_tokens += I_tokens
             try:
-                with client_claude.messages.stream(
-                    model=model,
-                    max_tokens=64000,
-                    messages=[{"role": "user", "content": Prompt}]
-                ) as stream:
-                    for _ in stream.text_stream:
-                        pass
-                    final_message = stream.get_final_message()
-                text = final_message.content[0].text.strip()
+                def _call():
+                    with client_claude.messages.stream(
+                        model=model,
+                        max_tokens=64000,
+                        messages=[{"role": "user", "content": Prompt}]
+                    ) as stream:
+                        for _ in stream.text_stream:
+                            pass
+                        final_message = stream.get_final_message()
+                    return final_message.content[0].text.strip()
+ 
+                future = _timeout_executor.submit(_call)
+                try:
+                    text = future.result(timeout=call_timeout)
+                except FutureTimeoutError:
+                    print(f"{model}: nessuna risposta completa entro {call_timeout:.0f}s, chiamata abbandonata")
+                    raise TimeoutError(f"Timeout dopo {call_timeout:.0f}s")
+ 
                 O_tokens = count_tokens(text)
                 with volta_lock:
                     tot_O_tokens += O_tokens
+                    
                 start = text.find('[')
                 end = text.rfind(']')
                 if start != -1 and end != -1:
@@ -194,7 +199,7 @@ def A_call_llm(cluster_list: list, prompt: str, retry: int = 2, delay: float = 5
                     raise ValueError("Risposta senza JSON valido.")
                 Result = json.loads(text)
                 return Result
-
+ 
             except Exception as e:
                 err = str(e)
                 print(err)
@@ -211,45 +216,53 @@ def A_call_llm(cluster_list: list, prompt: str, retry: int = 2, delay: float = 5
                 else:
                     print(f"Errore persistente con {model}: {e}")
                     break
-
+ 
     raise RuntimeError("Tutti i modelli hanno esaurito la quota.")
 
-def O_call_llm(cluster_list: list, prompt: str, retry: int = 4, delay: float = 5.0) -> dict:
-
+def O_call_llm(cluster_list: list, prompt: str, retry: int = 4, delay: float = 5.0, call_timeout: float = 200.0) -> dict:
+ 
     global tot_O_tokens
     global tot_I_tokens
     global volta
-
+ 
     n = volta + 1
     with volta_lock:
         volta += 1
     print("chiamata: ", n)
     Prompt = prompt.replace("{}", json.dumps(cluster_list, ensure_ascii=False, indent=2), 1)
-    I_tokens = count_tokens(Prompt)
-    with volta_lock:
-        tot_I_tokens += I_tokens
-
+ 
     for model in OPENAI_MODELS:
         for attempt in range(retry):
             wait_if_rate_limited()
+            I_tokens = count_tokens(Prompt)
+            with volta_lock:
+                tot_I_tokens += I_tokens
             text = None
             try:
-                text_chunks = []
-                with client_openai.with_options(timeout=300.0).chat.completions.stream(
-                    model=model,
-                    max_completion_tokens=128000,
-                    messages=[{"role": "user", "content": Prompt}]
-                ) as stream:
-                    for event in stream:
-                        if event.type == "content.delta":
-                            text_chunks.append(event.delta)
-                    final_completion = stream.get_final_completion()
-
-                text = "".join(text_chunks).strip() if text_chunks else final_completion.choices[0].message.content.strip()
+                def _call():
+                    text_chunks = []
+                    with client_openai.chat.completions.stream(
+                        model=model,
+                        max_completion_tokens=128000,
+                        messages=[{"role": "user", "content": Prompt}]
+                    ) as stream:
+                        for event in stream:
+                            if event.type == "content.delta":
+                                text_chunks.append(event.delta)
+                        final_completion = stream.get_final_completion()
+                    return "".join(text_chunks).strip() if text_chunks else final_completion.choices[0].message.content.strip()
+ 
+                future = _timeout_executor.submit(_call)
+                try:
+                    text = future.result(timeout=call_timeout)
+                except FutureTimeoutError:
+                    print(f"{model}: nessuna risposta completa entro {call_timeout:.0f}s, chiamata abbandonata")
+                    raise TimeoutError(f"Timeout dopo {call_timeout:.0f}s")
+ 
                 O_tokens = count_tokens(text)
                 with volta_lock:
                     tot_O_tokens += O_tokens
-
+ 
                 start = text.find('[')
                 end = text.rfind(']')
                 if start != -1 and end != -1:
@@ -258,7 +271,7 @@ def O_call_llm(cluster_list: list, prompt: str, retry: int = 4, delay: float = 5
                     raise ValueError("Risposta senza JSON valido.")
                 Result = json.loads(text)
                 return Result
-
+ 
             except Exception as e:
                 err = str(e)
                 print(err)
@@ -275,7 +288,7 @@ def O_call_llm(cluster_list: list, prompt: str, retry: int = 4, delay: float = 5
                 else:
                     print(f"Errore persistente con {model}: {e}")
                     break
-
+ 
     raise RuntimeError("Tutti i modelli hanno esaurito la quota.")
 
 def G_call_llm(cluster_list: list, prompt: str, retry: int = 5, delay: float = 5.0) -> str:
@@ -491,7 +504,7 @@ def run(input_path: str, batch_to_be_combined: int, batch_length: int, llm: str,
 
     deepness = 0
     while workers >= 1:
-        if deepness == 4 and workers > 3:
+        if deepness == 3 and workers > 3:
             break
         deepness += 1
         workers = max(workers // batch_to_be_combined, 1)
@@ -552,6 +565,7 @@ def run(input_path: str, batch_to_be_combined: int, batch_length: int, llm: str,
         sys_clusters = system_json_to_clusters(O)
         conll_results = evaluate_collection(gold_clusters, sys_clusters)
         er_results = evaluate_collection_er_metrics(gold_clusters, sys_clusters)
+        print(f"Cluster gold: {len(gold_clusters)}  |  Cluster di sistema: {len(sys_clusters)}")
         print("\n=== Famiglia CoNLL / CDCR ===")
         print("MUC   : P={:.4f}  R={:.4f}  F1={:.4f}".format(
             conll_results["muc"]["precision"], conll_results["muc"]["recall"], conll_results["muc"]["f1"]))
@@ -572,8 +586,7 @@ def run(input_path: str, batch_to_be_combined: int, batch_length: int, llm: str,
         print(e)
 
     print("\n")
-    print("token in Input: ", tot_I_tokens)
-    print("token in Output: ", tot_O_tokens)
+    print("I :", tot_I_tokens, "; O :", tot_O_tokens)
 
     fine = time.perf_counter()
     print(f"Tempo di MERGE_CLUSTERS: {(fine - inizio)/60:.2f} minuti")
