@@ -469,8 +469,8 @@ def gt_json_to_clusters(gt_path):
         gt_raw = json.load(f)
 
     clusters = []
-    for entity_name, mentions in gt_raw.items():
-        cluster = [_mention_key(m) for m in mentions if m is not None]
+    for cluster in gt_raw: #_, ment in gt_raw.items()
+        cluster = [_mention_key(m) for m in cluster.get("mentions") if m is not None] #  ment
         if cluster:
             clusters.append(cluster)
     return clusters
@@ -619,8 +619,8 @@ def evaluate_collection_er_metrics(gold_clusters, sys_clusters):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    GOLD_PATH = r"D:\Tesi PY\Ground_truth\th12_Gold_Clusters.json"#r"D:\Tesi PY\Ground_truth\M_GROUND_TRUTH.json"        # il tuo file GT: { "nome entita'": [mentions] }
-    SYSTEM_PATH = r"D:\Tesi PY\output\th12_Clusters_Uniti.json"#r"D:\LLM_CER\llmcer_output_converted.json"  # il tuo file di output del modello
+    GOLD_PATH = r"D:\Tesi PY\LLM_CER_datasets\Music20K\Music_gt.json"#r"D:\Tesi PY\Ground_truth\M_GROUND_TRUTH.json"        # il tuo file GT: { "nome entita'": [mentions] }
+    SYSTEM_PATH = r"D:\Tesi PY\LLM_CER_datasets\Music_output.json"  # il tuo file di output del modello
 
     gold_clusters = gt_json_to_clusters(GOLD_PATH)
     sys_clusters = system_json_to_clusters(SYSTEM_PATH)
@@ -646,7 +646,7 @@ if __name__ == "__main__":
     er_results = evaluate_collection_er_metrics(gold_clusters, sys_clusters)
     print("\n=== Famiglia ER / clustering generico (compatibile con LLM-CER) ===")
     print("Calcolate su gold ∪ sistema: penalizzano anche mention extra/mancanti.")
-    print("ACC            : {:.4f}".format(er_results["acc"]))
+    print("ACC : {:.4f}".format(er_results["acc"]))
     print("Purity         : {:.4f}".format(er_results["purity"]))
     print("Inverse-Purity : {:.4f}".format(er_results["inverse_purity"]))
     print("FP-measure     : {:.4f}".format(er_results["fp_measure"]))
