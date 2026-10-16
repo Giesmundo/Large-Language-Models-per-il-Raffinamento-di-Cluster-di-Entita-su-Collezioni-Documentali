@@ -12,7 +12,7 @@ from google import genai
 import tiktoken
 import copy
 from openai import OpenAI
-from data.yours_data import (INPUT_PATH, OUTPUT_PATH_CLEAN, GOLD_OPERATIONS, GENAI_MODELS, CLAUDE_MODELS, OPENAI_MODELS, 
+from yours_data import (INPUT_PATH, OUTPUT_PATH_CLEAN, GOLD_OPERATIONS, GENAI_MODELS, CLAUDE_MODELS, OPENAI_MODELS, 
                             API_KEY_GENAI, API_KEY_ANTHROPIC, API_KEY_OPENAI, CBS, CX, NT, LLM_CLEAN, PROMPT_ADVISOR, PROMPT_CHECKER)
 
 volta_lock = threading.Lock() #DEBUG
