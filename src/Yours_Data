@@ -6,7 +6,7 @@ OUTPUT_PATH_MERGE = r""         # output merge
 GOLD_MENTIONS = r""             # not really used but good to have here
 GOLD_CLUSTERS = r""             # GT merge
 GOLD_OPERATIONS = r""           # GT clean
-ALREADY_MERGED_PATH = None      # Database Path
+ALREADY_MERGED_PATH = None      # Database Path,  None se non è presente alcun database
 
 # LLMs MODELS --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
