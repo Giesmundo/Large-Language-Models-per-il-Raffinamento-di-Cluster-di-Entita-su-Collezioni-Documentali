@@ -2,7 +2,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import json
 import time
+import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from collections import defaultdict
 from typing import Callable
 import anthropic
@@ -11,7 +13,7 @@ import tiktoken
 import copy
 from openai import OpenAI
 from data.yours_data import (INPUT_PATH, OUTPUT_PATH_CLEAN, GOLD_OPERATIONS, GENAI_MODELS, CLAUDE_MODELS, OPENAI_MODELS, 
-                            API_KEY_GENAI, API_KEY_ANTHROPIC, API_KEY_OPENAI, CBS, CX, NT, LLM_CLEAN)
+                            API_KEY_GENAI, API_KEY_ANTHROPIC, API_KEY_OPENAI, CBS, CX, NT, LLM_CLEAN, PROMPT_ADVISOR, PROMPT_CHECKER)
 
 volta_lock = threading.Lock() #DEBUG
 volta = 0                     #DEBUG
@@ -29,26 +31,11 @@ tot_O_tokens = 0
 client_genai = genai.Client(api_key=API_KEY_GENAI)
 client_claude = anthropic.Anthropic(api_key=API_KEY_ANTHROPIC)
 client_openai = OpenAI(api_key=API_KEY_OPENAI)
-_encoder = tiktoken.get_encoding("cl100k_base")
+_encoder = tiktoken.get_encoding("o200k_base")
 
-prompt = """Devi verificare che le menzioni dei cluster si riferiscano correttamente al cluster in cui si trovano.
-In output crea un dict(str, list), la lista di interi, e inserisci:
-in ELIMINARE le menzioni il cui text NON è presente nel proprio context, se c'è. 
-in SPOSTARE le menzioni il cui text è giusto ma NON si rifersice al cluster in cui si trova.
-OUTPUT es:
-{"ELIMINARE":[ID_ES1, ID_ES2], "SPOSTARE": [ID_ES3, ID_ES4]}
-Rispondi SOLO CON JSON VALIDO, senza testo prima o dopo, senza esempi, senza markdown.
-Input:
-{}"""
+prompt = PROMPT_ADVISOR
 
-pCheck = """Queste menzioni sono state identificate come \"da eliminare\", seguendo questa definizone :
-menzioni il cui text NON è presente nel proprio context
-verifica per ogni menzione in Input se ciò è vero, restituisci solamanete il campo \"id\" delle menzioni che devono essere realmente eliminate.
-OUTPUT es:
-{"ELIMINARE":[ID_ES1, ID_ES2]}
-Rispondi SOLO CON JSON VALIDO, senza testo prima o dopo, senza esempi, senza markdown.
-Input:
-{}"""
+pCheck = PROMPT_CHECKER
 
 def count_tokens(text: str) -> int:
     return len(_encoder.encode(text))
@@ -154,15 +141,11 @@ def A_call_llm(cluster_list: list, prompt: str, retry: int = 3, delay: float = 5
                     raise ValueError("La risposta del modello non contiene un JSON valido.")
                 result_ = json.loads(text)
 
-                try:
-                    Result = {
-                        "SPOSTARE": [int(x) for x in result_.get("SPOSTARE", [])],
-                        "ELIMINARE": [int(y) for y in result_.get("ELIMINARE", [])]
-                    }
-                except:
-                    Result = {
-                        "ELIMINARE": [int(y) for y in result_.get("ELIMINARE", [])]
-                    }
+                Result = {
+                    "SPOSTARE": [int(x) for x in result_.get("SPOSTARE", [])],
+                    "ELIMINARE": [int(y) for y in result_.get("ELIMINARE", [])]
+                }
+                
                 return Result
             
             except Exception as e:
@@ -221,15 +204,11 @@ def O_call_llm(cluster_list: list, prompt: str, retry: int = 3, delay: float = 7
                     raise ValueError("La risposta del modello non contiene un JSON valido.")
                 result_ = json.loads(text)
 
-                try:
-                    Result = {
-                        "SPOSTARE": [int(x) for x in result_.get("SPOSTARE", [])],
-                        "ELIMINARE": [int(y) for y in result_.get("ELIMINARE", [])]
-                    }
-                except:
-                    Result = {
-                        "ELIMINARE": [int(y) for y in result_.get("ELIMINARE", [])]
-                    }
+                Result = {
+                    "SPOSTARE": [int(x) for x in result_.get("SPOSTARE", [])],
+                    "ELIMINARE": [int(y) for y in result_.get("ELIMINARE", [])]
+                }
+                
                 return Result
 
             except Exception as e:
@@ -276,15 +255,12 @@ def G_call_llm(cluster_list: list, prompt: str, retry: int = 3, delay: float = 5
                 else:
                     raise ValueError("La risposta del modello non contiene un JSON valido.")
                 result_ = json.loads(text)
-                try:
-                    Result = {
-                        "SPOSTARE": [int(x) for x in result_.get("SPOSTARE", [])],
-                        "ELIMINARE": [int(y) for y in result_.get("ELIMINARE", [])]
-                    }
-                except:
-                    Result = {
-                        "ELIMINARE": [int(y) for y in result_.get("ELIMINARE", [])]
-                    }
+
+                Result = {
+                    "SPOSTARE": [int(x) for x in result_.get("SPOSTARE", [])],
+                    "ELIMINARE": [int(y) for y in result_.get("ELIMINARE", [])]
+                }
+                
                 return Result
             except Exception as e:
                 err = str(e)
@@ -365,7 +341,7 @@ def check_ground_truth(doc_id: str, cluster_list: list, to_change: dict[str, lis
     for categoria in ("Non da eliminare", "Non da spostare", "Era da eliminare", "Era da spostare", "Numero Chiamate"):
         errori.setdefault(doc_id, {}).setdefault(categoria, {})
 
-    errori[doc_id]["Numero Chiamate"] = errori[doc_id].get("Numero Chiamate", 0) +1
+    errori[doc_id]["Numero Chiamate"] = errori[doc_id].get("Numero Chiamate", 0) + 1
 
     falso_positivo_E = 0
     vero_positivo_E = 0
@@ -475,8 +451,12 @@ def run(input_path: str, context: bool, NER_type: bool, batch_length: int, llm: 
         to_change: dict[str, list] = process_clusters_parallel(clusters_lists, workers, LLM = LLM_f)
         document_clusters = Sep_D[doc_id]
         m_to_E = get_mentions(document_clusters, to_change["ELIMINARE"])
-        result_check = LLM_f(m_to_E, pCheck)  # controllo sulle menzioni da eliminare
-        to_change["ELIMINARE"] = result_check.get("ELIMINARE", [])
+        if m_to_E != []:
+            try:
+                result_check = LLM_f(m_to_E, pCheck)  # controllo sulle menzioni da eliminare
+                to_change["ELIMINARE"] = result_check.get("ELIMINARE", [])
+            except:
+                print("errore su controllo da eliminare")
         check_ground_truth(doc_id, document_clusters, to_change, gt)
         Cleaned_clusters = clean_clusters(document_clusters, to_change, NER_type)
         Cleaned_documents.extend(Cleaned_clusters)
@@ -500,8 +480,6 @@ def run(input_path: str, context: bool, NER_type: bool, batch_length: int, llm: 
     
     fine = time.perf_counter()
     print(f"Tempo di CLEAN_CLUSTERS: {(fine - inizio)/60:.2f} minuti")
-
-    return O
 
 if __name__ == "__main__" :
     run(INPUT_PATH, context = CX, NER_type = NT, batch_length = CBS, output_path=OUTPUT_PATH_CLEAN, llm = LLM_CLEAN)
