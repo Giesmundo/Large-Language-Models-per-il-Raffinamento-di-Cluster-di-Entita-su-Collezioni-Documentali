@@ -1,0 +1,75 @@
+# DATASETS PATH ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+INPUT_PATH = r""                # input clean
+OUTPUT_PATH_CLEAN = r""         # output clena & input merge
+OUTPUT_PATH_MERGE = r""         # output merge
+GOLD_MENTIONS = r""             # not really used but good to have here
+GOLD_CLUSTERS = r""             # GT merge
+GOLD_OPERATIONS = r""           # GT clean
+ALREADY_MERGED_PATH = None      # Database Path
+
+# LLMs MODELS --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+GENAI_MODELS = ["gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite", "gemini-3-flash-preview"]
+CLAUDE_MODELS = ["claude-haiku-4-5-20251001"]
+OPENAI_MODELS = ["gpt-5.6-luna","gpt-6-luna"]
+
+# "openai" per modelli OpenAI, "anthropic" per modelli Anthropic, "genai" per modelli GenAI
+
+LLM_CLEAN = "openai"    # LLMs per la fase di Clean
+LLM_MERGE = "openai"    # LLMs per la fase di Merge
+
+# API KEY -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+API_KEY_GENAI = ""
+API_KEY_ANTHROPIC = ""
+API_KEY_OPENAI = ""
+
+# PARAMETRI DI SISTEMA ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+CBS = 80            # clean batch size
+CX = True           # with context
+NT = False          # with ner type
+MBS = 100           # merge batch size
+BTC = 3             # batch to be combined
+
+# PROMPTs FASE DI CLEAN ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+PROMPT_ADVISOR = """Devi verificare che le menzioni dei cluster si riferiscano correttamente al cluster in cui si trovano.
+In output crea un dict(str, list), la lista di interi, e inserisci:
+in ELIMINARE le menzioni il cui text NON è presente nel proprio context, o è sottostringa di un'altra parola. 
+in SPOSTARE le menzioni il cui text è giusto ma NON si rifersice al cluster in cui si trova.
+Attenzione alle date e alle entità numeriche.
+OUTPUT es:
+{"ELIMINARE":[ID_ES1, ID_ES2], "SPOSTARE": [ID_ES3, ID_ES4]}
+Rispondi SOLO CON JSON VALIDO, senza testo prima o dopo, senza esempi, senza markdown.
+Input:
+{}"""
+
+PROMPT_CHECKER = """Queste menzioni sono state identificate come \"da eliminare\", seguendo questa definizone :
+\"menzioni il cui text NON è presente nel proprio context\"
+verifica per ogni menzione in Input se ciò è vero, restituisci solamanete il campo \"id\" delle menzioni che devono essere realmente eliminate.
+Per le menzioni che non devono essere eliminate non ritornare nulla.
+Attenzione alle date e alle entità numeriche.
+OUTPUT es:
+{"SPOSTARE":[], "ELIMINARE":[ID_ES1, ID_ES2]}
+ATTENZIONE "SPOSTARE" DEVE ESSERE SEMPRE VUOTO
+Rispondi SOLO CON JSON VALIDO, senza testo prima o dopo, senza esempi, senza markdown.
+Input:
+{}"""
+
+# PROMPT PER LA FASE DI MERGE ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+PROMPT_CONCILER = """Sei un programma di Entity Resolution e operi su più lingue.
+In Input hai una lista di titoli di Cluster, associati al loro id
+es: [[id_es1, "title_es1"],[id_es2,"title_es2"],[id_es3," title_es3"], [id_es4, "title_es4"]]
+crea un list[list] in cui ogn lista contiene gli ID dei cluster che riferiscono alla stessa entità.
+Nella lista di output ci devono essere TUTTI gli elementi dati in input, se un cluster è l'unico a riferirsi ad un'entità allora mettilo singolo
+Attenzione ai pronomi, ai nomi di persona, alle date e alle entità numeriche.
+Esempio Output:
+[[ides_1, ides_45], [ides_4, ides_7, ides_89], [ides_76], [ides_21]]
+Restituisci ESCLUSIVAMENTE LA LISTA DI LISTE, nessun testo prima o dopo, nessun esempio, nessun markdown.
+ATTENZIONE A RIPORTARE GLI ID DEI CLUSTER ESATTAMENTE IDENTICI, NON CI DEVONO ESSERE ERRORI NE DUPLICATI.
+NOTA CHE I TITOLI DEI CLUSTER IN INPUT NON PER FORZA SONO NELLA LINGUA ITALIANA, POSSONO ESSERE IN QUALSIASI LINGUA.
+Input:
+{}"""
