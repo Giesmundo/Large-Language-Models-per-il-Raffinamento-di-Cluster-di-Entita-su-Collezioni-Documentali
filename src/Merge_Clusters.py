@@ -13,7 +13,7 @@ import random
 import tiktoken
 from openai import OpenAI
 from Coref_evaluation import (gt_json_to_clusters, system_json_to_clusters, evaluate_collection, evaluate_collection_er_metrics)
-from data.yours_data import (OUTPUT_PATH_CLEAN, OUTPUT_PATH_MERGE, GOLD_CLUSTERS,ALREADY_MERGED_PATH, GENAI_MODELS, CLAUDE_MODELS, OPENAI_MODELS, 
+from yours_data import (OUTPUT_PATH_CLEAN, OUTPUT_PATH_MERGE, GOLD_CLUSTERS,ALREADY_MERGED_PATH, GENAI_MODELS, CLAUDE_MODELS, OPENAI_MODELS, 
                             API_KEY_GENAI, API_KEY_ANTHROPIC, API_KEY_OPENAI, MBS, BTC, LLM_MERGE, PROMPT_CONCILER)
 
 OUTPUT_PATH = OUTPUT_PATH_MERGE
