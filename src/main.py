@@ -1,8 +1,10 @@
 import Clean_Clusters as Clean_Clusters
 import Merge_Clusters as Merge_Clusters
 import time
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from data.yours_data import (INPUT_PATH, OUTPUT_PATH_CLEAN, OUTPUT_PATH_MERGE, CX, NT, CBS, MBS, BTC, LLM_CLEAN, LLM_MERGE)
-
 inizio = time.perf_counter()
 with open(r"D:\Tesi PY\errors\errori.txt", "w") as f:
     f.write("")
