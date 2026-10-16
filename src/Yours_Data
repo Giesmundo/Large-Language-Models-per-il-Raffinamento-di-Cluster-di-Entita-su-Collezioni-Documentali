@@ -30,8 +30,8 @@ API_KEY_OPENAI = ""
 CBS = 80            # clean batch size
 CX = True           # with context
 NT = False          # with ner type
-MBS = 100           # merge batch size
-BTC = 3             # batch to be combined
+MBS = 50            # merge batch size
+BTC = 2             # batch to be combined
 
 # PROMPTs FASE DI CLEAN ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
